@@ -108,7 +108,7 @@ Default configuration in `.env`:
 NODE_ENV=development
 PORT=5050
 DATABASE_URL=
-JWT_SECRET=dev-super-secret-jwt-key-2026!
+JWT_SECRET=replace-with-a-strong-random-secret
 JWT_EXPIRES_IN=7d
 GEMINI_API_KEY=your_gemini_api_key_here
 ```

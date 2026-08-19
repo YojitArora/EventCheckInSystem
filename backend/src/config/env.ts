@@ -5,7 +5,7 @@ const envSchema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
   PORT: z.coerce.number().int().positive().default(5050),
   DATABASE_URL: z.string().min(1, "DATABASE_URL is required"),
-  JWT_SECRET: z.string().min(8, "JWT_SECRET must be at least 8 characters").default("dev-super-secret-jwt-key-2026!"),
+  JWT_SECRET: z.string().min(8, "JWT_SECRET must be at least 8 characters"),
   JWT_EXPIRES_IN: z.string().default("7d"),
   GEMINI_API_KEY: z.string().optional(),
 });
