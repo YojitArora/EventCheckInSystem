@@ -107,7 +107,7 @@ Default configuration in `.env`:
 ```env
 NODE_ENV=development
 PORT=5050
-DATABASE_URL=postgresql://checkin:checkin@localhost:5432/event_checkin?schema=public
+DATABASE_URL=
 JWT_SECRET=dev-super-secret-jwt-key-2026!
 JWT_EXPIRES_IN=7d
 GEMINI_API_KEY=your_gemini_api_key_here
