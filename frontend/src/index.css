@@ -498,14 +498,43 @@ h1, h2, h3, h4, h5, h6 {
 .scanner-viewport {
   position: relative;
   width: 100%;
-  max-width: 480px;
-  aspect-ratio: 1/1;
+  max-width: 500px;
   margin: 0 auto;
   border-radius: var(--radius-xl);
   overflow: hidden;
   background: #000;
   border: 2px solid var(--border-glass);
   box-shadow: var(--shadow-lg);
+}
+
+#qr-reader-viewport {
+  width: 100% !important;
+  border: none !important;
+  background: #000 !important;
+}
+
+#qr-reader-viewport video {
+  width: 100% !important;
+  height: auto !important;
+  max-height: 480px;
+  object-fit: cover !important;
+  border-radius: var(--radius-xl);
+  display: block;
+}
+
+#qr-reader-viewport__scan_region {
+  position: relative;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+}
+
+#qr-reader-viewport__scan_region img {
+  display: none !important;
+}
+
+#qr-reader-viewport__dashboard {
+  display: none !important;
 }
 
 .scanner-laser {

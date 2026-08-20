@@ -1,27 +1,35 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import {
   AlertCircle,
   ArrowLeft,
   Camera,
+  CameraOff,
   CheckCircle2,
-  Clock,
-  FlipHorizontal,
+  ExternalLink,
+  Info,
   KeyRound,
+  Lock,
   RefreshCw,
   ShieldAlert,
-  ShieldCheck,
-  Smartphone,
   Sparkles,
   Wifi,
   WifiOff,
-  Zap,
 } from "lucide-react";
-import { Html5Qrcode, Html5QrcodeScannerState } from "html5-qrcode";
+import { API_BASE_URL } from "../api/axios";
 import { checkinApi } from "../api/checkin.api";
 import { eventsApi } from "../api/events.api";
 import { useOfflineScanner } from "../hooks/useOfflineScanner";
 import { CheckInSuccessPayload, EventDetail } from "../types";
+import {
+  CameraDeviceInfo,
+  CameraErrorInfo,
+  categorizeCameraError,
+  checkCameraSecurityContext,
+  getCameraDevices,
+  ScannerLifecycleManager,
+  selectPreferredCamera,
+} from "../utils/qrScanner";
 
 export const OrganizerScannerPage: React.FC = () => {
   const { eventId } = useParams<{ eventId: string }>();
@@ -29,9 +37,15 @@ export const OrganizerScannerPage: React.FC = () => {
 
   // Scanner state
   const [isScanning, setIsScanning] = useState(false);
-  const [cameraError, setCameraError] = useState<string | null>(null);
+  const [cameraError, setCameraError] = useState<CameraErrorInfo | null>(null);
   const [manualToken, setManualToken] = useState("");
   const [isProcessing, setIsProcessing] = useState(false);
+
+  // Camera devices & selection (supports Apple Continuity Camera)
+  const [devices, setDevices] = useState<CameraDeviceInfo[]>([]);
+  const [selectedDeviceId, setSelectedDeviceId] = useState<string>("");
+  const [isRefreshingDevices, setIsRefreshingDevices] = useState<boolean>(false);
+  const [showContinuityTip, setShowContinuityTip] = useState<boolean>(false);
 
   // Result Banner / Card
   const [scanResult, setScanResult] = useState<{
@@ -42,10 +56,17 @@ export const OrganizerScannerPage: React.FC = () => {
     code?: string;
   } | null>(null);
 
-  const html5QrCodeRef = useRef<Html5Qrcode | null>(null);
+  const scannerManagerRef = useRef<ScannerLifecycleManager | null>(null);
   const isProcessingRef = useRef(false);
+  const lastProcessedTokenRef = useRef<string | null>(null);
+  const lastProcessedTimeRef = useRef<number>(0);
+  const selectedDeviceIdRef = useRef<string>("");
 
   const { isOnline, pendingCount, enqueueScan, syncQueue, isSyncing } = useOfflineScanner();
+
+  useEffect(() => {
+    selectedDeviceIdRef.current = selectedDeviceId;
+  }, [selectedDeviceId]);
 
   useEffect(() => {
     if (eventId) {
@@ -53,7 +74,7 @@ export const OrganizerScannerPage: React.FC = () => {
     }
   }, [eventId]);
 
-  // Audio chimes via Web Audio API (zero external mp3 file dependencies!)
+  // Audio chimes via Web Audio API
   const playSound = (success: boolean) => {
     try {
       const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
@@ -63,7 +84,6 @@ export const OrganizerScannerPage: React.FC = () => {
       gain.connect(audioCtx.destination);
 
       if (success) {
-        // High upbeat dual tone
         osc.frequency.setValueAtTime(587.33, audioCtx.currentTime); // D5
         osc.frequency.setValueAtTime(880, audioCtx.currentTime + 0.1); // A5
         gain.gain.setValueAtTime(0.2, audioCtx.currentTime);
@@ -71,7 +91,6 @@ export const OrganizerScannerPage: React.FC = () => {
         osc.start();
         osc.stop(audioCtx.currentTime + 0.35);
       } else {
-        // Low buzz tone
         osc.frequency.setValueAtTime(220, audioCtx.currentTime); // A3
         osc.frequency.setValueAtTime(146.83, audioCtx.currentTime + 0.15); // D3
         gain.gain.setValueAtTime(0.25, audioCtx.currentTime);
@@ -84,98 +103,385 @@ export const OrganizerScannerPage: React.FC = () => {
     }
   };
 
-  const processToken = async (rawToken: string) => {
-    if (isProcessingRef.current) return;
-    isProcessingRef.current = true;
-    setIsProcessing(true);
+  const processToken = useCallback(
+    async (rawToken: string) => {
+      if (isProcessingRef.current) return;
+      isProcessingRef.current = true;
+      setIsProcessing(true);
 
-    try {
-      if (!isOnline) {
-        // Offline handling: enqueue locally
-        enqueueScan(rawToken, event?.name);
-        playSound(true);
+      try {
+        if (!isOnline) {
+          enqueueScan(rawToken, event?.name);
+          playSound(true);
+          setScanResult({
+            type: "SUCCESS",
+            title: "Offline Scan Saved",
+            message:
+              "Scan saved to local device queue. It will automatically synchronize when network is restored.",
+          });
+        } else {
+          const result = await checkinApi.checkIn(rawToken);
+          playSound(true);
+          setScanResult({
+            type: "SUCCESS",
+            title: "Check-In Approved",
+            message: `Welcome, ${result.attendee.name}!`,
+            payload: result,
+          });
+        }
+      } catch (err: any) {
+        playSound(false);
+        const isNetworkError =
+          !err?.status && (err?.message?.includes("Network") || err?.message?.includes("connect"));
+
         setScanResult({
-          type: "SUCCESS",
-          title: "Offline Scan Saved",
-          message: "Scan saved to local device queue. It will automatically synchronize when network is restored.",
+          type: "ERROR",
+          title: isNetworkError
+            ? "Backend Server Unavailable"
+            : err?.code === "ALREADY_CHECKED_IN"
+            ? "Already Checked In"
+            : "Scan Rejected",
+          message: isNetworkError
+            ? `Unable to reach backend at ${API_BASE_URL}. Ensure backend is running and accessible on LAN.`
+            : err?.message || "Check-in failed. Please verify the ticket token.",
+          code: err?.code || (isNetworkError ? "NETWORK_ERROR" : undefined),
         });
-      } else {
-        // Online direct check-in
-        const result = await checkinApi.checkIn(rawToken);
-        playSound(true);
-        setScanResult({
-          type: "SUCCESS",
-          title: "Check-In Approved",
-          message: `Welcome, ${result.attendee.name}!`,
-          payload: result,
-        });
+      } finally {
+        setIsProcessing(false);
+        setTimeout(() => {
+          isProcessingRef.current = false;
+        }, 1500); // 1.5s debounce before next scan
       }
-    } catch (err: any) {
-      playSound(false);
-      setScanResult({
-        type: "ERROR",
-        title: err?.code === "ALREADY_CHECKED_IN" ? "Already Checked In" : "Scan Rejected",
-        message: err?.message || "Check-in failed. Please verify the ticket token.",
-        code: err?.code,
-      });
-    } finally {
-      setIsProcessing(false);
-      setTimeout(() => {
-        isProcessingRef.current = false;
-      }, 1500); // 1.5s debounce before next scan
+    },
+    [isOnline, enqueueScan, event?.name]
+  );
+
+  const handleDecodedToken = useCallback(
+    (rawToken: string) => {
+      const trimmed = rawToken.trim();
+      if (!trimmed) return;
+
+      if (isProcessingRef.current) return;
+
+      const now = Date.now();
+      if (
+        lastProcessedTokenRef.current === trimmed &&
+        now - lastProcessedTimeRef.current < 2000
+      ) {
+        return;
+      }
+
+      lastProcessedTokenRef.current = trimmed;
+      lastProcessedTimeRef.current = now;
+      processToken(trimmed);
+    },
+    [processToken]
+  );
+
+  const stopScanner = useCallback(async () => {
+    if (scannerManagerRef.current) {
+      await scannerManagerRef.current.stop();
+    }
+    setIsScanning(false);
+  }, []);
+
+  const startScanner = useCallback(
+    async (deviceIdToUse?: string) => {
+      setCameraError(null);
+      const activeDeviceId = deviceIdToUse || selectedDeviceIdRef.current;
+
+      let manager = scannerManagerRef.current;
+      if (!manager) {
+        manager = new ScannerLifecycleManager({
+          elementId: "qr-reader-viewport",
+          deviceId: activeDeviceId || undefined,
+          facingMode: "environment",
+          fps: 15,
+        });
+        scannerManagerRef.current = manager;
+      } else if (activeDeviceId) {
+        manager.setDeviceId(activeDeviceId);
+      }
+
+      try {
+        await manager.start(
+          (decodedText) => {
+            handleDecodedToken(decodedText);
+          },
+          (err) => {
+            setCameraError(categorizeCameraError(err));
+            setIsScanning(false);
+          },
+          activeDeviceId || undefined
+        );
+        setIsScanning(true);
+      } catch (err: any) {
+        setCameraError(categorizeCameraError(err));
+        setIsScanning(false);
+      }
+    },
+    [handleDecodedToken]
+  );
+
+  const loadDevices = useCallback(
+    async (requestPermission = false): Promise<CameraDeviceInfo[]> => {
+      setIsRefreshingDevices(true);
+      try {
+        const list = await getCameraDevices(requestPermission);
+        setDevices(list);
+
+        const preferred = selectPreferredCamera(list, selectedDeviceIdRef.current);
+        if (preferred && preferred !== selectedDeviceIdRef.current) {
+          setSelectedDeviceId(preferred);
+          selectedDeviceIdRef.current = preferred;
+          if (scannerManagerRef.current) {
+            scannerManagerRef.current.setDeviceId(preferred);
+            if (isScanning) {
+              await stopScanner();
+              await startScanner(preferred);
+            }
+          }
+        }
+        return list;
+      } catch (err) {
+        console.warn("Failed to enumerate camera devices:", err);
+        return [];
+      } finally {
+        setIsRefreshingDevices(false);
+      }
+    },
+    [isScanning, startScanner, stopScanner]
+  );
+
+  const handleDeviceChange = async (newDeviceId: string) => {
+    setSelectedDeviceId(newDeviceId);
+    selectedDeviceIdRef.current = newDeviceId;
+
+    if (scannerManagerRef.current) {
+      scannerManagerRef.current.setDeviceId(newDeviceId);
+      if (isScanning) {
+        await stopScanner();
+        await startScanner(newDeviceId);
+      }
     }
   };
 
-  const startScanner = async () => {
-    setCameraError(null);
-    try {
-      if (!html5QrCodeRef.current) {
-        html5QrCodeRef.current = new Html5Qrcode("qr-reader-viewport");
-      }
+  // Initialize scanner on mount with lifecycle cleanup
+  useEffect(() => {
+    let isMounted = true;
 
-      await html5QrCodeRef.current.start(
-        { facingMode: "environment" },
-        {
+    // Check origin security context before auto-starting
+    const security = checkCameraSecurityContext();
+    if (!security.isSupported && security.errorInfo) {
+      setCameraError(security.errorInfo);
+      setIsScanning(false);
+      return;
+    }
+
+    const init = async () => {
+      try {
+        // Enumerate devices (unlocks labels if permissions already granted)
+        const detected = await loadDevices(false);
+        const preferredId = selectPreferredCamera(detected);
+
+        if (!isMounted) return;
+
+        const manager = new ScannerLifecycleManager({
+          elementId: "qr-reader-viewport",
+          deviceId: preferredId,
+          facingMode: "environment",
           fps: 10,
           qrbox: { width: 260, height: 260 },
           aspectRatio: 1.0,
-        },
-        (decodedText) => {
-          processToken(decodedText);
-        },
-        () => {}
-      );
+        });
+        scannerManagerRef.current = manager;
 
-      setIsScanning(true);
-    } catch (err: any) {
-      setCameraError(err?.message || "Camera access denied or unavailable.");
-      setIsScanning(false);
-    }
-  };
+        setCameraError(null);
+        await manager.start(
+          (decodedText) => {
+            if (isMounted) {
+              handleDecodedToken(decodedText);
+            }
+          },
+          (err) => {
+            if (isMounted) {
+              setCameraError(categorizeCameraError(err));
+              setIsScanning(false);
+            }
+          },
+          preferredId
+        );
 
-  const stopScanner = async () => {
-    if (html5QrCodeRef.current && html5QrCodeRef.current.isScanning) {
-      try {
-        await html5QrCodeRef.current.stop();
-      } catch (err) {
-        console.error("Failed to stop scanner", err);
+        if (isMounted) {
+          setIsScanning(true);
+          // Re-enumerate to capture populated labels now that camera permission is active
+          loadDevices(false);
+        }
+      } catch (err: any) {
+        if (isMounted) {
+          setCameraError(categorizeCameraError(err));
+          setIsScanning(false);
+        }
       }
-    }
-    setIsScanning(false);
-  };
-
-  useEffect(() => {
-    startScanner();
-    return () => {
-      stopScanner();
     };
-  }, []);
+
+    init();
+
+    // Listen to physical device changes (e.g. iPhone connected wirelessly via Continuity)
+    const onDeviceChange = () => {
+      loadDevices(false);
+    };
+
+    if (navigator.mediaDevices?.addEventListener) {
+      navigator.mediaDevices.addEventListener("devicechange", onDeviceChange);
+    }
+
+    return () => {
+      isMounted = false;
+      if (navigator.mediaDevices?.removeEventListener) {
+        navigator.mediaDevices.removeEventListener("devicechange", onDeviceChange);
+      }
+      if (scannerManagerRef.current) {
+        scannerManagerRef.current.destroy().catch((err) => {
+          console.warn("Scanner cleanup error:", err);
+        });
+        scannerManagerRef.current = null;
+      }
+    };
+  }, [handleDecodedToken, loadDevices]);
 
   const handleManualSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!manualToken.trim()) return;
+    if (!manualToken.trim() || isProcessing) return;
     processToken(manualToken.trim());
     setManualToken("");
+  };
+
+  const selectedDevice = devices.find((d) => d.deviceId === selectedDeviceId);
+  const isContinuityActive = selectedDevice?.isContinuity;
+  const hasContinuityDevice = devices.some((d) => d.isContinuity);
+
+  const renderCameraErrorContent = () => {
+    if (!cameraError) return null;
+
+    const isHttpsIssue = cameraError.type === "INSECURE_ORIGIN";
+
+    return (
+      <div
+        className="scanner-viewport"
+        style={{
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          justifyContent: "center",
+          padding: "2rem 1.5rem",
+          textAlign: "center",
+          background: isHttpsIssue ? "rgba(30, 41, 59, 0.95)" : "var(--bg-secondary)",
+          color: "var(--text-secondary)",
+          minHeight: "300px",
+          border: isHttpsIssue ? "1px solid rgba(245, 158, 11, 0.3)" : "1px solid var(--border-subtle)",
+          borderRadius: "var(--radius-md)",
+        }}
+      >
+        {isHttpsIssue ? (
+          <div
+            style={{
+              width: "56px",
+              height: "56px",
+              borderRadius: "50%",
+              background: "rgba(245, 158, 11, 0.15)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              marginBottom: "1rem",
+            }}
+          >
+            <Lock size={28} color="#f59e0b" />
+          </div>
+        ) : cameraError.type === "PERMISSION_DENIED" ? (
+          <div
+            style={{
+              width: "56px",
+              height: "56px",
+              borderRadius: "50%",
+              background: "rgba(244, 63, 94, 0.15)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              marginBottom: "1rem",
+            }}
+          >
+            <CameraOff size={28} color="#f43f5e" />
+          </div>
+        ) : (
+          <div
+            style={{
+              width: "56px",
+              height: "56px",
+              borderRadius: "50%",
+              background: "rgba(244, 63, 94, 0.15)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              marginBottom: "1rem",
+            }}
+          >
+            <AlertCircle size={28} color="#f43f5e" />
+          </div>
+        )}
+
+        <h4
+          style={{
+            color: isHttpsIssue ? "#fbbf24" : "#fda4af",
+            marginBottom: "0.5rem",
+            fontSize: "1.1rem",
+            fontWeight: 700,
+          }}
+        >
+          {cameraError.title}
+        </h4>
+
+        <p style={{ fontSize: "0.875rem", marginBottom: "0.75rem", maxWidth: "480px", lineHeight: "1.4" }}>
+          {cameraError.message}
+        </p>
+
+        {cameraError.actionableHint && (
+          <p
+            style={{
+              fontSize: "0.8rem",
+              color: "var(--text-muted)",
+              marginBottom: "1.25rem",
+              maxWidth: "480px",
+              lineHeight: "1.4",
+            }}
+          >
+            {cameraError.actionableHint}
+          </p>
+        )}
+
+        <div style={{ display: "flex", gap: "0.75rem", flexWrap: "wrap", justifyContent: "center" }}>
+          {cameraError.suggestedUrl && (
+            <a
+              href={cameraError.suggestedUrl}
+              className="btn btn-primary btn-sm"
+              style={{ display: "flex", alignItems: "center", gap: "0.4rem" }}
+            >
+              <ExternalLink size={14} />
+              <span>Open via HTTPS</span>
+            </a>
+          )}
+
+          <button
+            onClick={() => startScanner()}
+            className="btn btn-outline btn-sm"
+            style={{ display: "flex", alignItems: "center", gap: "0.4rem" }}
+          >
+            <RefreshCw size={14} />
+            <span>{isHttpsIssue ? "Try Camera Anyway" : "Retry Camera"}</span>
+          </button>
+        </div>
+      </div>
+    );
   };
 
   return (
@@ -249,40 +555,141 @@ export const OrganizerScannerPage: React.FC = () => {
           </p>
         </div>
 
+        {/* Camera Device Selector & Apple Continuity Bar */}
+        <div
+          style={{
+            background: "rgba(15, 23, 42, 0.6)",
+            border: "1px solid var(--border-subtle)",
+            borderRadius: "var(--radius-sm)",
+            padding: "0.75rem 1rem",
+            marginBottom: "1.25rem",
+            display: "flex",
+            flexDirection: "column",
+            gap: "0.5rem",
+          }}
+        >
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              flexWrap: "wrap",
+              gap: "0.5rem",
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", flex: 1, minWidth: "240px" }}>
+              <Camera size={16} color="var(--accent-cyan)" />
+              <label
+                htmlFor="camera-select"
+                style={{ fontSize: "0.8rem", fontWeight: 600, color: "var(--text-secondary)", whiteSpace: "nowrap" }}
+              >
+                Video Source:
+              </label>
+              <select
+                id="camera-select"
+                value={selectedDeviceId}
+                onChange={(e) => handleDeviceChange(e.target.value)}
+                className="form-input"
+                style={{
+                  padding: "0.3rem 0.6rem",
+                  fontSize: "0.8rem",
+                  height: "auto",
+                  flex: 1,
+                  background: "var(--bg-secondary)",
+                }}
+              >
+                {devices.length === 0 && (
+                  <option value="">Default Camera (Auto)</option>
+                )}
+                {devices.map((device) => (
+                  <option key={device.deviceId} value={device.deviceId}>
+                    {device.displayLabel}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div style={{ display: "flex", alignItems: "center", gap: "0.4rem" }}>
+              <button
+                type="button"
+                onClick={() => loadDevices(true)}
+                disabled={isRefreshingDevices}
+                className="btn btn-outline btn-sm"
+                title="Refresh camera list"
+                style={{ padding: "0.3rem 0.6rem", fontSize: "0.75rem" }}
+              >
+                <RefreshCw size={12} className={isRefreshingDevices ? "animate-spin" : ""} />
+                <span>Refresh Cameras</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setShowContinuityTip((prev) => !prev)}
+                className="btn btn-outline btn-sm"
+                title="Apple Continuity Camera Info"
+                style={{ padding: "0.3rem 0.5rem" }}
+              >
+                <Info size={14} color={isContinuityActive ? "#10b981" : "var(--text-muted)"} />
+              </button>
+            </div>
+          </div>
+
+          {/* Continuity Camera Status / Helper Guidance */}
+          {isContinuityActive ? (
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "0.4rem",
+                fontSize: "0.75rem",
+                color: "#6ee7b7",
+                background: "rgba(16, 185, 129, 0.1)",
+                padding: "0.25rem 0.5rem",
+                borderRadius: "var(--radius-sm)",
+              }}
+            >
+              <Sparkles size={13} color="#10b981" />
+              <span>
+                <strong>Apple Continuity Camera Active:</strong> Using wireless high-resolution iPhone camera.
+              </span>
+            </div>
+          ) : (
+            (showContinuityTip || !hasContinuityDevice) && (
+              <div
+                style={{
+                  fontSize: "0.75rem",
+                  color: "var(--text-muted)",
+                  background: "rgba(255, 255, 255, 0.03)",
+                  padding: "0.35rem 0.6rem",
+                  borderRadius: "var(--radius-sm)",
+                  lineHeight: "1.4",
+                }}
+              >
+                <span style={{ color: "var(--accent-cyan)", fontWeight: 600 }}>
+                  💡 Apple Continuity Camera:
+                </span>{" "}
+                To use your iPhone as a wireless camera on Mac, ensure both devices share the same <strong>Apple ID</strong>, with <strong>Wi-Fi and Bluetooth</strong> enabled. Then click <em>Refresh Cameras</em>.
+              </div>
+            )
+          )}
+        </div>
+
         {/* Viewfinder Element */}
-        <div style={{ position: "relative", marginBottom: "1.5rem" }}>
+        <div style={{ position: "relative", marginBottom: "1.5rem", minHeight: "280px" }}>
           <div
             id="qr-reader-viewport"
             className="scanner-viewport"
             style={{
-              display: cameraError ? "none" : "block",
+              visibility: cameraError ? "hidden" : "visible",
+              position: cameraError ? "absolute" : "relative",
+              top: 0,
+              left: 0,
+              width: "100%",
             }}
           />
-          {isScanning && <div className="scanner-laser" />}
+          {isScanning && !cameraError && <div className="scanner-laser" />}
 
-          {cameraError && (
-            <div
-              className="scanner-viewport"
-              style={{
-                display: "flex",
-                flexDirection: "column",
-                alignItems: "center",
-                justifyContent: "center",
-                padding: "2rem",
-                textAlign: "center",
-                background: "var(--bg-secondary)",
-                color: "var(--text-secondary)",
-              }}
-            >
-              <Camera size={44} color="#f43f5e" style={{ marginBottom: "1rem" }} />
-              <h4 style={{ color: "#fda4af", marginBottom: "0.5rem" }}>Camera Access Error</h4>
-              <p style={{ fontSize: "0.85rem", marginBottom: "1rem" }}>{cameraError}</p>
-              <button onClick={startScanner} className="btn btn-outline btn-sm">
-                <RefreshCw size={14} />
-                <span>Retry Camera</span>
-              </button>
-            </div>
-          )}
+          {cameraError && renderCameraErrorContent()}
         </div>
 
         {/* Camera Toggle Bar */}
@@ -292,7 +699,7 @@ export const OrganizerScannerPage: React.FC = () => {
               <span>Pause Camera</span>
             </button>
           ) : (
-            <button onClick={startScanner} className="btn btn-primary btn-sm">
+            <button onClick={() => startScanner()} className="btn btn-primary btn-sm">
               <Camera size={14} />
               <span>Activate Camera</span>
             </button>
@@ -301,9 +708,14 @@ export const OrganizerScannerPage: React.FC = () => {
 
         {/* Manual Token Entry Fallback */}
         <form onSubmit={handleManualSubmit} style={{ borderTop: "1px solid var(--border-subtle)", paddingTop: "1.5rem" }}>
-          <label className="form-label" htmlFor="manual-token" style={{ fontSize: "0.8rem" }}>
-            Manual Token Entry (Fallback)
-          </label>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "0.4rem" }}>
+            <label className="form-label" htmlFor="manual-token" style={{ fontSize: "0.8rem", marginBottom: 0 }}>
+              Manual Token Entry (Direct Fallback)
+            </label>
+            <span style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>
+              Always active
+            </span>
+          </div>
           <div style={{ display: "flex", gap: "0.5rem" }}>
             <div style={{ position: "relative", flex: 1 }}>
               <input

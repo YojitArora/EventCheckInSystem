@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { checkinApi } from "../api/checkin.api";
 import { SyncCheckInPayload, SyncCheckInResponse } from "../types";
 
@@ -22,36 +22,40 @@ export function getDeviceId(): string {
   return id;
 }
 
+export function loadStoredQueue(): QueuedScan[] {
+  try {
+    const saved = localStorage.getItem(OFFLINE_QUEUE_KEY);
+    return saved ? JSON.parse(saved) : [];
+  } catch {
+    return [];
+  }
+}
+
+export function saveStoredQueue(queue: QueuedScan[]): void {
+  try {
+    localStorage.setItem(OFFLINE_QUEUE_KEY, JSON.stringify(queue));
+  } catch (err) {
+    console.error("Failed to persist offline queue:", err);
+  }
+}
+
 export function useOfflineScanner() {
-  const [isOnline, setIsOnline] = useState<boolean>(navigator.onLine);
-  const [queue, setQueue] = useState<QueuedScan[]>(() => {
-    try {
-      const saved = localStorage.getItem(OFFLINE_QUEUE_KEY);
-      return saved ? JSON.parse(saved) : [];
-    } catch {
-      return [];
-    }
-  });
+  const [isOnline, setIsOnline] = useState<boolean>(
+    typeof navigator !== "undefined" ? navigator.onLine : true
+  );
+  const [queue, setQueue] = useState<QueuedScan[]>(() => loadStoredQueue());
   const [isSyncing, setIsSyncing] = useState<boolean>(false);
 
+  const isSyncingRef = useRef<boolean>(false);
+  const queueRef = useRef<QueuedScan[]>(queue);
+
+  // Keep queueRef and localStorage updated on state change
   useEffect(() => {
-    const handleOnline = () => setIsOnline(true);
-    const handleOffline = () => setIsOnline(false);
-
-    window.addEventListener("online", handleOnline);
-    window.addEventListener("offline", handleOffline);
-
-    return () => {
-      window.removeEventListener("online", handleOnline);
-      window.removeEventListener("offline", handleOffline);
-    };
-  }, []);
-
-  useEffect(() => {
-    localStorage.setItem(OFFLINE_QUEUE_KEY, JSON.stringify(queue));
+    queueRef.current = queue;
+    saveStoredQueue(queue);
   }, [queue]);
 
-  const enqueueScan = (token: string, eventName?: string): QueuedScan => {
+  const enqueueScan = useCallback((token: string, eventName?: string): QueuedScan => {
     const clientScanId = `scan-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
     const newScan: QueuedScan = {
       id: clientScanId,
@@ -64,34 +68,52 @@ export function useOfflineScanner() {
       status: "PENDING",
     };
 
-    setQueue((prev) => [newScan, ...prev]);
-    return newScan;
-  };
+    setQueue((prev) => {
+      const updated = [newScan, ...prev];
+      queueRef.current = updated;
+      saveStoredQueue(updated);
+      return updated;
+    });
 
-  const syncQueue = async (): Promise<{
+    return newScan;
+  }, []);
+
+  const syncQueue = useCallback(async (): Promise<{
     synced: number;
     failed: number;
     results: SyncCheckInResponse[];
   }> => {
-    if (!navigator.onLine || isSyncing) {
+    // Prevent duplicate sync requests and do not sync when offline
+    if ((typeof navigator !== "undefined" && !navigator.onLine) || isSyncingRef.current) {
       return { synced: 0, failed: 0, results: [] };
     }
 
-    const pendingScans = queue.filter((s) => s.status === "PENDING" || s.status === "FAILED");
+    const currentQueue = queueRef.current;
+    const pendingScans = currentQueue.filter(
+      (s) => s.status === "PENDING" || s.status === "FAILED"
+    );
+
     if (pendingScans.length === 0) {
       return { synced: 0, failed: 0, results: [] };
     }
 
+    isSyncingRef.current = true;
     setIsSyncing(true);
+
     let synced = 0;
     let failed = 0;
     const results: SyncCheckInResponse[] = [];
 
     for (const scan of pendingScans) {
       try {
-        setQueue((prev) =>
-          prev.map((s) => (s.id === scan.id ? { ...s, status: "SYNCING" } : s))
-        );
+        setQueue((prev) => {
+          const updated = prev.map((s) =>
+            s.id === scan.id ? { ...s, status: "SYNCING" as const } : s
+          );
+          queueRef.current = updated;
+          saveStoredQueue(updated);
+          return updated;
+        });
 
         const response = await checkinApi.syncCheckIn({
           deviceId: scan.deviceId,
@@ -103,34 +125,85 @@ export function useOfflineScanner() {
         results.push(response);
         synced++;
 
-        setQueue((prev) =>
-          prev.map((s) => (s.id === scan.id ? { ...s, status: "SYNCED" } : s))
-        );
+        setQueue((prev) => {
+          const updated = prev.map((s) =>
+            s.id === scan.id ? { ...s, status: "SYNCED" as const, lastError: undefined } : s
+          );
+          queueRef.current = updated;
+          saveStoredQueue(updated);
+          return updated;
+        });
       } catch (err: any) {
         failed++;
-        setQueue((prev) =>
-          prev.map((s) =>
+        const errorMessage = err?.message || "Sync failed";
+        setQueue((prev) => {
+          const updated = prev.map((s) =>
             s.id === scan.id
-              ? { ...s, status: "FAILED", lastError: err?.message || "Sync failed" }
+              ? { ...s, status: "FAILED" as const, lastError: errorMessage }
               : s
-          )
-        );
+          );
+          queueRef.current = updated;
+          saveStoredQueue(updated);
+          return updated;
+        });
       }
     }
 
+    isSyncingRef.current = false;
     setIsSyncing(false);
-    return { synced, failed, results };
-  };
 
-  const clearCompleted = () => {
-    setQueue((prev) => prev.filter((s) => s.status !== "SYNCED"));
-  };
+    return { synced, failed, results };
+  }, []);
+
+  const clearCompleted = useCallback(() => {
+    setQueue((prev) => {
+      const updated = prev.filter((s) => s.status !== "SYNCED");
+      queueRef.current = updated;
+      saveStoredQueue(updated);
+      return updated;
+    });
+  }, []);
+
+  // Listen for online/offline events and automatically trigger sync on reconnect
+  useEffect(() => {
+    const handleOnline = () => {
+      setIsOnline(true);
+      // Automatically synchronize pending scans on reconnect
+      syncQueue();
+    };
+
+    const handleOffline = () => {
+      setIsOnline(false);
+    };
+
+    window.addEventListener("online", handleOnline);
+    window.addEventListener("offline", handleOffline);
+
+    // If online on initial mount with pending items, trigger background sync
+    if (typeof navigator !== "undefined" && navigator.onLine) {
+      const hasPending = queueRef.current.some(
+        (s) => s.status === "PENDING" || s.status === "FAILED"
+      );
+      if (hasPending) {
+        syncQueue();
+      }
+    }
+
+    return () => {
+      window.removeEventListener("online", handleOnline);
+      window.removeEventListener("offline", handleOffline);
+    };
+  }, [syncQueue]);
+
+  const pendingCount = queue.filter(
+    (s) => s.status === "PENDING" || s.status === "FAILED"
+  ).length;
 
   return {
     isOnline,
     queue,
     isSyncing,
-    pendingCount: queue.filter((s) => s.status === "PENDING" || s.status === "FAILED").length,
+    pendingCount,
     enqueueScan,
     syncQueue,
     clearCompleted,

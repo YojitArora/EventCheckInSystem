@@ -13,7 +13,24 @@ export interface SocketContextType {
 
 export const SocketContext = createContext<SocketContextType | undefined>(undefined);
 
-const SOCKET_SERVER_URL = import.meta.env.VITE_SOCKET_URL || "http://localhost:5050";
+export const getSocketServerUrl = (): string => {
+  if (import.meta.env.VITE_SOCKET_URL) {
+    return import.meta.env.VITE_SOCKET_URL;
+  }
+  if (import.meta.env.VITE_API_URL) {
+    return import.meta.env.VITE_API_URL.replace(/\/api\/?$/, "");
+  }
+  if (typeof window !== "undefined" && window.location?.hostname) {
+    const hostname = window.location.hostname;
+    if (hostname !== "localhost" && hostname !== "127.0.0.1") {
+      const protocol = window.location.protocol === "https:" ? "https:" : "http:";
+      return `${protocol}//${hostname}:5050`;
+    }
+  }
+  return "http://localhost:5050";
+};
+
+const SOCKET_SERVER_URL = getSocketServerUrl();
 
 export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [socket, setSocket] = useState<Socket | null>(null);

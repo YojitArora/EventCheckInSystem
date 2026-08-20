@@ -1,7 +1,21 @@
 import axios, { AxiosError } from "axios";
 import { ApiErrorResponse } from "../types";
 
-export const API_BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:5050/api";
+export const getApiBaseUrl = (): string => {
+  if (import.meta.env.VITE_API_URL) {
+    return import.meta.env.VITE_API_URL;
+  }
+  if (typeof window !== "undefined" && window.location?.hostname) {
+    const hostname = window.location.hostname;
+    if (hostname !== "localhost" && hostname !== "127.0.0.1") {
+      const protocol = window.location.protocol === "https:" ? "https:" : "http:";
+      return `${protocol}//${hostname}:5050/api`;
+    }
+  }
+  return "http://localhost:5050/api";
+};
+
+export const API_BASE_URL = getApiBaseUrl();
 
 export const apiClient = axios.create({
   baseURL: API_BASE_URL,

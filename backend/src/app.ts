@@ -1,5 +1,6 @@
 import cors from "cors";
 import express from "express";
+import { isOriginAllowed } from "./config/cors";
 import { errorHandler, notFoundHandler } from "./middleware/error.middleware";
 import apiRoutes from "./routes";
 import { logger } from "./utils/logger";
@@ -7,7 +8,20 @@ import { logger } from "./utils/logger";
 export function createApp(): express.Express {
   const app = express();
 
-  app.use(cors());
+  app.use(
+    cors({
+      origin: (origin, callback) => {
+        if (isOriginAllowed(origin)) {
+          callback(null, true);
+        } else {
+          callback(new Error(`Origin '${origin}' not allowed by CORS`));
+        }
+      },
+      credentials: true,
+      methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+      allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With"],
+    })
+  );
   app.use(express.json());
 
   app.use((req, _res, next) => {
