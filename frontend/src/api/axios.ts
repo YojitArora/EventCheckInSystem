@@ -3,7 +3,8 @@ import { ApiErrorResponse } from "../types";
 
 export const getApiBaseUrl = (): string => {
   if (import.meta.env.VITE_API_URL) {
-    return import.meta.env.VITE_API_URL;
+    const url = import.meta.env.VITE_API_URL.trim().replace(/\/+$/, "");
+    return url;
   }
   if (typeof window !== "undefined" && window.location?.hostname) {
     const hostname = window.location.hostname;
@@ -24,9 +25,27 @@ export const apiClient = axios.create({
   },
 });
 
-// Request interceptor: Attach JWT token if available
+// Request interceptor: Attach JWT token if available & prevent duplicate /api/api
 apiClient.interceptors.request.use(
   (config) => {
+    // Ensure axios calls correctly combine the base URL and endpoints without creating duplicate "/api/api"
+    if (config.baseURL && config.url) {
+      const baseNormalized = config.baseURL.replace(/\/+$/, "");
+      const baseEndsWithApi = /\/api$/i.test(baseNormalized);
+      const urlStartsWithApi = /^\/?api(\/|$)/i.test(config.url);
+
+      if (baseEndsWithApi && urlStartsWithApi) {
+        // Strip duplicate leading /api from url so base /api + url /events combine cleanly
+        config.url = config.url.replace(/^\/?api/, "");
+        if (!config.url.startsWith("/")) {
+          config.url = "/" + config.url;
+        }
+      } else if (!baseEndsWithApi && !urlStartsWithApi && !config.url.startsWith("http")) {
+        // If neither base nor url has /api, ensure /api is prefixed
+        config.url = `/api${config.url.startsWith("/") ? "" : "/"}${config.url}`;
+      }
+    }
+
     const token = localStorage.getItem("eventpass_token");
     if (token && config.headers) {
       config.headers.Authorization = `Bearer ${token}`;
@@ -42,7 +61,11 @@ apiClient.interceptors.response.use(
   (error: AxiosError<ApiErrorResponse>) => {
     if (error.response?.status === 401) {
       // Clear token if invalid/expired, unless we are attempting to login/register
-      const isAuthPath = error.config?.url?.includes("/auth/login") || error.config?.url?.includes("/auth/register");
+      const isAuthPath =
+        error.config?.url?.includes("/auth/login") ||
+        error.config?.url?.includes("/auth/register") ||
+        error.config?.url?.includes("/api/auth/login") ||
+        error.config?.url?.includes("/api/auth/register");
       if (!isAuthPath) {
         localStorage.removeItem("eventpass_token");
         localStorage.removeItem("eventpass_user");

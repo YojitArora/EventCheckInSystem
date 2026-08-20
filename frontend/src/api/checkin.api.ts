@@ -8,7 +8,7 @@ import {
 
 export const checkinApi = {
   async checkIn(token: string): Promise<CheckInSuccessPayload> {
-    const res = await apiClient.post<ApiSuccessResponse<CheckInSuccessPayload>>("/checkins", {
+    const res = await apiClient.post<ApiSuccessResponse<CheckInSuccessPayload>>("/api/checkins", {
       token,
     });
     return res.data.data;
@@ -16,7 +16,7 @@ export const checkinApi = {
 
   async syncCheckIn(payload: SyncCheckInPayload): Promise<SyncCheckInResponse> {
     const res = await apiClient.post<ApiSuccessResponse<SyncCheckInResponse>>(
-      "/checkins/sync",
+      "/api/checkins/sync",
       payload
     );
     return res.data.data;

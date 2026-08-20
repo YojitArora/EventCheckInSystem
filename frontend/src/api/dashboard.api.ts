@@ -4,17 +4,18 @@ import { ApiSuccessResponse, EventDashboard } from "../types";
 export const dashboardApi = {
   async getDashboard(eventId: string): Promise<EventDashboard> {
     const res = await apiClient.get<ApiSuccessResponse<{ dashboard: EventDashboard }>>(
-      `/events/${eventId}/dashboard`
+      `/api/events/${eventId}/dashboard`
     );
     return res.data.data.dashboard;
   },
 
   getExportUrl(eventId: string): string {
-    return `${API_BASE_URL}/events/${eventId}/export`;
+    const base = API_BASE_URL.replace(/\/api\/?$/, "");
+    return `${base}/api/events/${eventId}/export`;
   },
 
   async downloadCsv(eventId: string, eventName: string): Promise<void> {
-    const res = await apiClient.get(`/events/${eventId}/export`, {
+    const res = await apiClient.get(`/api/events/${eventId}/export`, {
       responseType: "blob",
     });
     const blob = new Blob([res.data], { type: "text/csv;charset=utf-8;" });

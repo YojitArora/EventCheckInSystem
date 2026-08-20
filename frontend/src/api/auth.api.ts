@@ -15,17 +15,17 @@ export interface LoginPayload {
 
 export const authApi = {
   async register(data: RegisterPayload): Promise<AuthResponseData> {
-    const res = await apiClient.post<ApiSuccessResponse<AuthResponseData>>("/auth/register", data);
+    const res = await apiClient.post<ApiSuccessResponse<AuthResponseData>>("/api/auth/register", data);
     return res.data.data;
   },
 
   async login(data: LoginPayload): Promise<AuthResponseData> {
-    const res = await apiClient.post<ApiSuccessResponse<AuthResponseData>>("/auth/login", data);
+    const res = await apiClient.post<ApiSuccessResponse<AuthResponseData>>("/api/auth/login", data);
     return res.data.data;
   },
 
   async getMe(): Promise<User> {
-    const res = await apiClient.get<ApiSuccessResponse<{ user: User }>>("/auth/me");
+    const res = await apiClient.get<ApiSuccessResponse<{ user: User }>>("/api/auth/me");
     return res.data.data.user;
   },
 };

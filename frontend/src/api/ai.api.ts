@@ -9,7 +9,7 @@ export interface AIInsightPayload {
 export const aiApi = {
   async getInsights(payload: AIInsightPayload): Promise<AIInsightResponse> {
     const res = await apiClient.post<ApiSuccessResponse<AIInsightResponse>>(
-      "/ai/insights",
+      "/api/ai/insights",
       payload
     );
     return res.data.data;
