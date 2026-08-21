@@ -86,7 +86,7 @@ export const OrganizerAIPage: React.FC = () => {
         <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
           <span className="badge badge-primary" style={{ display: "flex", alignItems: "center", gap: "0.3rem" }}>
             <Cpu size={12} />
-            <span>Gemini 1.5 Flash Grounded</span>
+            <span>Gemini Grounded AI</span>
           </span>
         </div>
       </div>
@@ -145,19 +145,22 @@ export const OrganizerAIPage: React.FC = () => {
 
       {/* Question Form */}
       <form onSubmit={handleFormSubmit} style={{ marginBottom: "2rem" }}>
-        <div style={{ position: "relative" }}>
+        <div className="search-bar-container">
           <input
             type="text"
             value={question}
             onChange={(e) => setQuestion(e.target.value)}
             placeholder="Ask a custom question (e.g. How can we improve attendance next time?)..."
-            className="form-input"
             style={{
-              paddingRight: "6.5rem",
-              paddingLeft: "1.25rem",
-              paddingTop: "0.85rem",
-              paddingBottom: "0.85rem",
+              flex: 1,
+              background: "transparent",
+              border: "none",
+              outline: "none",
+              color: "var(--text-primary)",
+              fontFamily: "var(--font-sans)",
               fontSize: "0.95rem",
+              padding: "0.5rem 0",
+              minWidth: 0,
             }}
           />
           <button
@@ -165,11 +168,9 @@ export const OrganizerAIPage: React.FC = () => {
             disabled={isLoading || !question.trim()}
             className="btn btn-primary"
             style={{
-              position: "absolute",
-              right: "0.5rem",
-              top: "50%",
-              transform: "translateY(-50%)",
-              padding: "0.45rem 1rem",
+              padding: "0.55rem 1.25rem",
+              borderRadius: "var(--radius-md)",
+              flexShrink: 0,
             }}
           >
             <span>{isLoading ? "Analyzing..." : "Ask AI"}</span>
@@ -213,7 +214,7 @@ export const OrganizerAIPage: React.FC = () => {
             }}
           />
           <h3 style={{ fontSize: "1.1rem", color: "var(--text-primary)", marginBottom: "0.25rem" }}>
-            Querying Gemini 1.5 Flash...
+            Querying Gemini Flash...
           </h3>
           <p style={{ fontSize: "0.85rem" }}>Injecting authoritative PostgreSQL statistics into prompt context</p>
         </div>
@@ -229,7 +230,7 @@ export const OrganizerAIPage: React.FC = () => {
             {insightData.source === "gemini" ? (
               <span className="badge badge-primary" style={{ display: "flex", alignItems: "center", gap: "0.3rem" }}>
                 <Sparkles size={12} />
-                <span>Source: Gemini 1.5 Flash</span>
+                <span>Source: Gemini Flash</span>
               </span>
             ) : (
               <span className="badge badge-amber" style={{ display: "flex", alignItems: "center", gap: "0.3rem" }}>

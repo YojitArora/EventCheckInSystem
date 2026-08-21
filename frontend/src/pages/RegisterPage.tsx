@@ -143,7 +143,7 @@ export const RegisterPage: React.FC = () => {
                 required
                 value={name}
                 onChange={(e) => setName(e.target.value)}
-                placeholder="Jane Doe"
+                placeholder="Your Name"
                 className="form-input"
                 style={{ paddingLeft: "2.5rem" }}
               />

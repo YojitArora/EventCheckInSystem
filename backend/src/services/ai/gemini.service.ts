@@ -1,3 +1,4 @@
+import { GoogleGenerativeAI } from "@google/generative-ai";
 import { env } from "../../config/env";
 import { logger } from "../../utils/logger";
 import { AIProvider } from "./ai.provider";
@@ -15,69 +16,45 @@ export class GeminiService implements AIProvider {
   private timeoutMs: number;
 
   constructor(config?: GeminiConfig) {
-    this.apiKey = config?.apiKey ?? env.GEMINI_API_KEY ?? process.env.GEMINI_API_KEY;
-    this.model = config?.model ?? "gemini-1.5-flash";
-    this.timeoutMs = config?.timeoutMs ?? 10_000;
+    this.apiKey = config?.apiKey ?? process.env.GEMINI_API_KEY ?? env.GEMINI_API_KEY;
+    this.model = config?.model ?? process.env.GEMINI_MODEL ?? env.GEMINI_MODEL ?? "gemini-2.0-flash";
+    this.timeoutMs = config?.timeoutMs ?? 30_000;
   }
 
   async generateInsight(prompt: string, _context?: Record<string, unknown>): Promise<string> {
-    const key = this.apiKey ?? env.GEMINI_API_KEY ?? process.env.GEMINI_API_KEY;
+    const apiKey = this.apiKey ?? process.env.GEMINI_API_KEY ?? env.GEMINI_API_KEY;
 
-    if (!key) {
+    if (!apiKey) {
       throw new Error("GEMINI_API_KEY is not configured");
     }
 
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${this.model}:generateContent?key=${encodeURIComponent(
-      key
-    )}`;
+    const genAI = new GoogleGenerativeAI(apiKey);
+    const generativeModel = genAI.getGenerativeModel({
+      model: this.model,
+      generationConfig: {
+        temperature: 0.2,
+        maxOutputTokens: 800,
+      },
+    });
 
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      setTimeout(() => reject(new Error(`Gemini request timed out after ${this.timeoutMs}ms`)), this.timeoutMs);
+    });
 
     try {
-      const response = await fetch(url, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          contents: [
-            {
-              parts: [{ text: prompt }],
-            },
-          ],
-          generationConfig: {
-            temperature: 0.2,
-            maxOutputTokens: 800,
-          },
-        }),
-        signal: controller.signal,
-      });
+      const responsePromise = generativeModel.generateContent(prompt).then((res) => res.response.text());
+      const text = await Promise.race([responsePromise, timeoutPromise]);
 
-      clearTimeout(timeout);
-
-      if (!response.ok) {
-        const errorText = await response.text().catch(() => "");
-        logger.error(`Gemini API error: HTTP ${response.status}`, { error: errorText });
-        throw new Error(`Gemini API returned status ${response.status}: ${errorText}`);
-      }
-
-      const data = (await response.json()) as {
-        candidates?: Array<{
-          content?: {
-            parts?: Array<{ text?: string }>;
-          };
-        }>;
-      };
-
-      const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
-      if (!text) {
-        throw new Error("Gemini returned an empty response candidate");
+      if (!text || !text.trim()) {
+        throw new Error("Gemini returned an empty response");
       }
 
       return text.trim();
     } catch (error) {
-      clearTimeout(timeout);
+      logger.error("Error generating insight via Google AI Studio (@google/generative-ai)", {
+        error: error instanceof Error ? error.message : String(error),
+        model: this.model,
+      });
       throw error;
     }
   }
