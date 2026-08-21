@@ -14,7 +14,7 @@ export function createApp(): express.Express {
         if (isOriginAllowed(origin)) {
           callback(null, true);
         } else {
-          callback(null, true);
+          callback(null, true);x
         }
       },
       credentials: true,
