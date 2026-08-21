@@ -220,41 +220,149 @@ export const OrganizerAIPage: React.FC = () => {
         </div>
       ) : insightData ? (
         <div className="glass-panel animate-scale-up" style={{ padding: "2rem", border: "1px solid rgba(99, 102, 241, 0.35)", boxShadow: "var(--shadow-lg)" }}>
-          {/* Source Indicator */}
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "1.25rem", borderBottom: "1px solid var(--border-subtle)", paddingBottom: "0.85rem" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
-              <Bot size={20} color="#818cf8" />
-              <h3 style={{ fontSize: "1.15rem", fontWeight: 700 }}>AI Executive Summary</h3>
+          {/* Source Indicator & Header */}
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "1.5rem", borderBottom: "1px solid var(--border-subtle)", paddingBottom: "1rem", flexWrap: "wrap", gap: "0.75rem" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "0.6rem" }}>
+              <div
+                style={{
+                  width: "36px",
+                  height: "36px",
+                  borderRadius: "10px",
+                  background: "linear-gradient(135deg, rgba(99, 102, 241, 0.2) 0%, rgba(6, 182, 212, 0.15) 100%)",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  border: "1px solid rgba(99, 102, 241, 0.3)",
+                }}
+              >
+                <Bot size={20} color="#818cf8" />
+              </div>
+              <div>
+                <h3 style={{ fontSize: "1.2rem", fontWeight: 700, margin: 0 }}>AI Executive Summary</h3>
+                <span style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>
+                  Synthesized directly from live PostgreSQL check-in telemetry
+                </span>
+              </div>
             </div>
 
             {insightData.source === "gemini" ? (
-              <span className="badge badge-primary" style={{ display: "flex", alignItems: "center", gap: "0.3rem" }}>
-                <Sparkles size={12} />
+              <span className="badge badge-primary" style={{ display: "flex", alignItems: "center", gap: "0.35rem", padding: "0.35rem 0.75rem" }}>
+                <Sparkles size={13} />
                 <span>Source: Gemini Flash</span>
               </span>
             ) : (
-              <span className="badge badge-amber" style={{ display: "flex", alignItems: "center", gap: "0.3rem" }}>
-                <Database size={12} />
+              <span className="badge badge-amber" style={{ display: "flex", alignItems: "center", gap: "0.35rem", padding: "0.35rem 0.75rem" }}>
+                <Database size={13} />
                 <span>Source: Database Fallback</span>
               </span>
             )}
           </div>
 
-          {/* AI Narrative Body */}
+          {/* Main Executive Summary Paragraph */}
           <div
             style={{
-              fontSize: "1rem",
-              lineHeight: 1.7,
+              fontSize: "1.05rem",
+              lineHeight: 1.65,
               color: "var(--text-primary)",
-              whiteSpace: "pre-line",
-              marginBottom: "1.75rem",
-              background: "rgba(0, 0, 0, 0.2)",
-              padding: "1.25rem",
+              marginBottom: "1.5rem",
+              background: "linear-gradient(135deg, rgba(99, 102, 241, 0.08) 0%, rgba(17, 24, 39, 0.6) 100%)",
+              padding: "1.25rem 1.5rem",
               borderRadius: "var(--radius-md)",
-              border: "1px solid var(--border-subtle)",
+              border: "1px solid rgba(99, 102, 241, 0.25)",
+              borderLeft: "4px solid var(--primary)",
             }}
           >
-            {insightData.insight}
+            {insightData.summary || insightData.insight || "AI summary currently unavailable."}
+          </div>
+
+          {/* Observations & Recommendations Grid */}
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))",
+              gap: "1.25rem",
+              marginBottom: "1.75rem",
+            }}
+          >
+            {/* Key Observations */}
+            <div
+              style={{
+                background: "rgba(17, 24, 39, 0.5)",
+                border: "1px solid var(--border-glass)",
+                borderRadius: "var(--radius-md)",
+                padding: "1.25rem",
+              }}
+            >
+              <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginBottom: "0.85rem" }}>
+                <TrendingUp size={16} color="#67e8f9" />
+                <h4 style={{ fontSize: "0.95rem", fontWeight: 700, color: "#67e8f9", textTransform: "uppercase", letterSpacing: "0.03em" }}>
+                  Key Observations
+                </h4>
+              </div>
+
+              {insightData.observations && insightData.observations.length > 0 ? (
+                <ul style={{ listStyle: "none", padding: 0, margin: 0, display: "flex", flexDirection: "column", gap: "0.6rem" }}>
+                  {insightData.observations.map((obs, idx) => (
+                    <li
+                      key={idx}
+                      style={{
+                        display: "flex",
+                        alignItems: "flex-start",
+                        gap: "0.6rem",
+                        fontSize: "0.875rem",
+                        color: "var(--text-secondary)",
+                        lineHeight: 1.5,
+                      }}
+                    >
+                      <span style={{ color: "#06b6d4", fontSize: "1rem", lineHeight: 1, marginTop: "1px" }}>•</span>
+                      <span>{obs}</span>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p style={{ fontSize: "0.85rem", color: "var(--text-muted)" }}>No specific observations recorded.</p>
+              )}
+            </div>
+
+            {/* Strategic Recommendations */}
+            <div
+              style={{
+                background: "rgba(17, 24, 39, 0.5)",
+                border: "1px solid var(--border-glass)",
+                borderRadius: "var(--radius-md)",
+                padding: "1.25rem",
+              }}
+            >
+              <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginBottom: "0.85rem" }}>
+                <Zap size={16} color="#34d399" />
+                <h4 style={{ fontSize: "0.95rem", fontWeight: 700, color: "#34d399", textTransform: "uppercase", letterSpacing: "0.03em" }}>
+                  Actionable Recommendations
+                </h4>
+              </div>
+
+              {insightData.recommendations && insightData.recommendations.length > 0 ? (
+                <ul style={{ listStyle: "none", padding: 0, margin: 0, display: "flex", flexDirection: "column", gap: "0.6rem" }}>
+                  {insightData.recommendations.map((rec, idx) => (
+                    <li
+                      key={idx}
+                      style={{
+                        display: "flex",
+                        alignItems: "flex-start",
+                        gap: "0.6rem",
+                        fontSize: "0.875rem",
+                        color: "var(--text-secondary)",
+                        lineHeight: 1.5,
+                      }}
+                    >
+                      <span style={{ color: "#10b981", fontSize: "1rem", lineHeight: 1, marginTop: "1px" }}>•</span>
+                      <span>{rec}</span>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p style={{ fontSize: "0.85rem", color: "var(--text-muted)" }}>No action items required.</p>
+              )}
+            </div>
           </div>
 
           {/* Grounding Statistics Grid */}

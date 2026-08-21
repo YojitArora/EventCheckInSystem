@@ -127,7 +127,17 @@ describe("HR4: AI Event Insights (POST /api/ai/insights)", () => {
     const mockProvider: AIProvider = {
       name: "gemini",
       generateInsight: vi.fn().mockResolvedValue(
-        "Based on the PostgreSQL statistics, your event reached a 66.67% attendance rate (2 out of 3 registered attendees checked in). Peak check-in occurred at 08:00 UTC."
+        JSON.stringify({
+          summary: "Based on the PostgreSQL statistics, your event reached a 66.67% attendance rate (2 out of 3 registered attendees checked in).",
+          observations: [
+            "Attendance rate is at 66.67% with 2 out of 3 checked in.",
+            "Peak check-in occurred at 08:00 UTC."
+          ],
+          recommendations: [
+            "Maintain current gate staffing for peak windows.",
+            "Send a reminder to the 1 registered attendee who has not checked in."
+          ]
+        })
       ),
     };
     aiService.setProvider(mockProvider);
@@ -152,7 +162,9 @@ describe("HR4: AI Event Insights (POST /api/ai/insights)", () => {
       attendancePercentage: 66.67,
       peakCheckInTime: { hour: "08:00 UTC", count: 2 },
     });
-    expect(response.body.data.insight).toContain("66.67% attendance rate");
+    expect(response.body.data.summary).toContain("66.67% attendance rate");
+    expect(response.body.data.observations).toHaveLength(2);
+    expect(response.body.data.recommendations).toHaveLength(2);
   });
 
   // 2. Unauthorized attendee request

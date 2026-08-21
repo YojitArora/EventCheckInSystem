@@ -5,10 +5,19 @@ import { EventDashboard, eventService } from "../event.service";
 import { AIProvider } from "./ai.provider";
 import { geminiService } from "./gemini.service";
 
+export interface AIStructuredInsight {
+  summary: string;
+  observations: string[];
+  recommendations: string[];
+}
+
 export interface AIInsightResult {
   source: string;
   statistics: EventDashboard;
   insight: string;
+  summary: string;
+  observations: string[];
+  recommendations: string[];
 }
 
 export function buildInsightsPrompt(
@@ -22,11 +31,10 @@ export function buildInsightsPrompt(
 
   return `You are an expert Event Analytics AI assistant for the event "${eventName}".
 
-CRITICAL CONSTRAINTS:
-1. The database is the single source of truth. You MUST strictly use ONLY the provided authoritative statistics below.
-2. DO NOT invent, calculate, or hallucinate any numbers, percentages, or metrics.
-3. Your job is to provide clear, actionable, and professional qualitative interpretation and recommendations explaining the provided numbers in response to the organizer's question.
-4. If the question asks for details not present in the statistics, state what the data shows and note any data limitations politely.
+CRITICAL INSTRUCTIONS:
+1. You MUST respond with ONLY a single raw valid JSON object. Do NOT wrap in Markdown code fences (\`\`\`json), do NOT use markdown headers (#), do NOT use asterisks (**), and do NOT include any introductory or concluding text outside the JSON.
+2. The database is the single authoritative source of truth. You MUST strictly use ONLY the provided PostgreSQL event metrics below. Do NOT invent or hallucinate any numbers or percentages.
+3. Keep the content clear, concise, and structured specifically for an executive analytics dashboard card.
 
 AUTHORITATIVE POSTGRESQL EVENT METRICS:
 - Total Capacity: ${stats.totalCapacity}
@@ -40,7 +48,18 @@ AUTHORITATIVE POSTGRESQL EVENT METRICS:
 ORGANIZER QUESTION:
 "${question}"
 
-Provide your professional insight based strictly on the authoritative metrics above:`;
+REQUIRED JSON SCHEMA:
+{
+  "summary": "A concise 2-3 sentence executive summary of the event performance answering the organizer's question without markdown asterisks or headings.",
+  "observations": [
+    "Important qualitative observation derived from the authoritative metrics",
+    "Second key observation regarding turnout, velocity, or capacity"
+  ],
+  "recommendations": [
+    "Actionable operational recommendation for organizers",
+    "Second actionable recommendation"
+  ]
+}`;
 }
 
 export class AIService {
@@ -85,17 +104,35 @@ export class AIService {
 
     // 4. Call replaceable AI Provider outside DB transaction with fallback handling
     try {
-      const insight = await this.provider.generateInsight(prompt, {
+      const insightRaw = await this.provider.generateInsight(prompt, {
         eventId,
         eventName: event.name,
         question,
         statistics,
       });
 
+      const cleaned = insightRaw.trim().replace(/^```json\s*/i, "").replace(/^```\s*/i, "").replace(/\s*```$/i, "");
+      const parsed = JSON.parse(cleaned);
+
+      if (!parsed || typeof parsed !== "object" || typeof parsed.summary !== "string") {
+        throw new Error("Invalid AI response schema: missing required 'summary' string");
+      }
+
+      const summary = parsed.summary.trim();
+      const observations = Array.isArray(parsed.observations)
+        ? parsed.observations.map((o: unknown) => String(o).trim()).filter(Boolean)
+        : [];
+      const recommendations = Array.isArray(parsed.recommendations)
+        ? parsed.recommendations.map((r: unknown) => String(r).trim()).filter(Boolean)
+        : [];
+
       return {
         source: this.provider.name,
         statistics,
-        insight,
+        insight: summary,
+        summary,
+        observations,
+        recommendations,
       };
     } catch (error) {
       logger.warn("AI Provider failed to generate insight, returning database fallback", {
@@ -104,10 +141,26 @@ export class AIService {
         eventId,
       });
 
+      const fallbackObservations: string[] = [
+        `Attendance rate is currently at ${statistics.attendancePercentage}% (${statistics.checkedInCount} of ${statistics.totalRegisteredAttendees} registered attendees checked in).`,
+        `There are ${statistics.noShows} registered attendees who have not checked in yet.`,
+        statistics.peakCheckInTime
+          ? `Peak arrival surge occurred at ${statistics.peakCheckInTime.hour} with ${statistics.peakCheckInTime.count} check-ins.`
+          : "No check-in surge has been recorded yet.",
+      ];
+
+      const fallbackRecommendations: string[] = [
+        "Monitor live gate throughput and adjust volunteer staffing to match arrival traffic.",
+        "Send reminder notifications or follow-ups to registered attendees who have not yet arrived.",
+      ];
+
       return {
         source: "database",
         statistics,
         insight: "AI unavailable. Showing calculated event statistics.",
+        summary: "AI unavailable. Showing calculated event statistics.",
+        observations: fallbackObservations,
+        recommendations: fallbackRecommendations,
       };
     }
   }

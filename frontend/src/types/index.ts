@@ -149,9 +149,12 @@ export interface EventDashboard {
 }
 
 export interface AIInsightResponse {
-  source: "gemini" | "database";
+  source: "gemini" | "database" | string;
   statistics: EventDashboard;
-  insight: string;
+  insight?: string;
+  summary: string;
+  observations: string[];
+  recommendations: string[];
 }
 
 export interface ApiSuccessResponse<T> {
