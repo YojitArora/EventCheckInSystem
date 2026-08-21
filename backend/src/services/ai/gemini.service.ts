@@ -17,7 +17,7 @@ export class GeminiService implements AIProvider {
 
   constructor(config?: GeminiConfig) {
     this.apiKey = config?.apiKey ?? process.env.GEMINI_API_KEY ?? env.GEMINI_API_KEY;
-    this.model = config?.model ?? process.env.GEMINI_MODEL ?? env.GEMINI_MODEL ?? "gemini-3.6-flash";
+    this.model = config?.model ?? process.env.GEMINI_MODEL ?? env.GEMINI_MODEL ?? "gemini-2.5-flash";
     this.timeoutMs = config?.timeoutMs ?? 30_000;
   }
 
@@ -25,7 +25,9 @@ export class GeminiService implements AIProvider {
     const apiKey = this.apiKey ?? process.env.GEMINI_API_KEY ?? env.GEMINI_API_KEY;
 
     if (!apiKey) {
-      throw new Error("GEMINI_API_KEY is not configured");
+      const errorMsg = "GEMINI_API_KEY is not configured in environment variables";
+      logger.error(errorMsg);
+      throw new Error(errorMsg);
     }
 
     const genAI = new GoogleGenerativeAI(apiKey);
@@ -51,9 +53,11 @@ export class GeminiService implements AIProvider {
 
       return text.trim();
     } catch (error) {
-      logger.error("Error generating insight via Google AI Studio (@google/generative-ai)", {
-        error: error instanceof Error ? error.message : String(error),
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      logger.error(`[GoogleGenerativeAI Error]: Failed generating insight with model ${this.model}`, {
         model: this.model,
+        error: errorMessage,
+        stack: error instanceof Error ? error.stack : undefined,
       });
       throw error;
     }
